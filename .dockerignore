@@ -1,0 +1,15 @@
+data/
+tests/
+docs/
+mlruns/
+.venv/
+.git/
+.github/
+__pycache__/
+*.pyc
+*.ipynb
+notebooks/
+requirements-train.txt
+requirements-dev.txt
+locustfile.py
+README.md
