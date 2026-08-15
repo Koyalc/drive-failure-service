@@ -18,5 +18,6 @@ class Predictor:
     def predict(self, records: list[DriveRecord]) -> list[float]:
         rows = [[getattr(r, name) for name in self.feature_names] for r in records]
         batch = np.array(rows, dtype=np.float32)
-        (probabilities,) = self.session.run(None, {self._input_name: batch})
-        return probabilities.reshape(-1).tolist()
+        # convert_xgboost's classifier output is [P(no-failure), P(failure)] per row.
+        (probabilities,) = self.session.run(["probabilities"], {self._input_name: batch})
+        return probabilities[:, 1].tolist()

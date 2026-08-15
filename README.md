@@ -4,10 +4,10 @@ Predicts hard-drive failure within a 30-day window from SMART telemetry, trained
 Backblaze's public hard-drive dataset. Served via FastAPI + ONNX Runtime, containerized,
 deployed to Cloud Run.
 
-**Status: scaffolding stage.** The API, tests, Docker build, and CI are wired up end-to-end
-against a placeholder (randomly-weighted) ONNX model so the whole pipeline is runnable before
-real training data is downloaded. Sections below get filled in as each phase completes —
-see `docs/` for the leakage ablation and drift report once they exist.
+**Status: Phase 1 complete.** Trained on real 2022 Q1-Q2 Backblaze data (2023 Q1-Q2 held out
+for the Phase 7 drift measurement); the API is serving that model's real ONNX export, not a
+placeholder. Cloud deploy, monitoring, and drift detection are still ahead — see the milestone
+list in the build guide.
 
 ## Quick start
 
@@ -63,18 +63,31 @@ artifacts/        model.onnx (gitignored) + feature_config.json (tracked)
 
 ## Results
 
-_To fill in after Phase 1 training runs on real data:_
+Trained on 2022 Q1-Q2 (38M drive-days, 90 days x2 quarters, ~1,300 failures — a 0.003% positive
+rate). Cutoff for the temporal split: 2022-05-01.
 
 | Metric | Naive random split | Grouped temporal split |
 |---|---|---|
-| PR-AUC | — | — |
-| Precision@100 | — | — |
+| PR-AUC | 0.222 | **0.027** |
+| ROC-AUC | 0.947 | 0.690 |
+| Precision@100 | 86% | 6% |
+
+The naive split lets the model see the future and memorize per-drive SMART baselines it
+implicitly re-encounters in "test" rows from the same serial number. Once both leaks are
+closed, PR-AUC drops **8x** and precision@100 — "of the 100 drives we'd flag tonight, how many
+actually fail" — drops from 86 to 6. The naive number is not a result anyone should ship;
+it's the control that shows why the split matters. See `src/pipeline/features.py` for both
+split implementations and `src/pipeline/train.py` for the run that produced this table.
+
+The 0.027 PR-AUC on the grouped split is a real baseline, not a bug — expect it to improve with
+feature engineering (rolling SMART deltas, drive age) in a later iteration; it is not this
+project's focus and is being reported honestly rather than hidden.
 
 | | |
 |---|---|
-| Image size | — |
-| p50 / p95 / p99 latency @ 200 RPS | — |
-| Drift: 2022→2023 PR-AUC degradation | — |
+| Image size | — (Phase 3) |
+| p50 / p95 / p99 latency @ 200 RPS | — (Phase 8) |
+| Drift: 2022→2023 PR-AUC degradation | — (Phase 7) |
 
 ## Design decisions
 
@@ -92,7 +105,7 @@ _To fill in after Phase 1 training runs on real data:_
 
 ```bash
 make install-train                                    # training deps
-python -m src.pipeline.train --data "data/2022*/*.csv" --cutoff 2022-05-01
+python -m src.pipeline.train --data "data/Q1_2022/*.csv" "data/Q2_2022/*.csv" --cutoff 2022-05-01
 make docker-build
 make docker-run
 ```

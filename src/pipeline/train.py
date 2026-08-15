@@ -73,7 +73,9 @@ def export_onnx(model: xgb.XGBClassifier, out_path: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", required=True, help="Glob path to quarterly CSVs")
+    parser.add_argument(
+        "--data", required=True, nargs="+", help="One or more glob paths to quarterly CSVs"
+    )
     parser.add_argument("--cutoff", required=True, help="YYYY-MM-DD temporal split cutoff")
     parser.add_argument("--artifacts-dir", default="artifacts")
     args = parser.parse_args()
@@ -94,6 +96,7 @@ def main():
 
     onnx_path = f"{args.artifacts_dir}/model.onnx"
     export_onnx(model, onnx_path)
+    model.save_model(f"{args.artifacts_dir}/xgb_model.json")
 
     config_path = f"{args.artifacts_dir}/feature_config.json"
     config = json.loads(Path(config_path).read_text())

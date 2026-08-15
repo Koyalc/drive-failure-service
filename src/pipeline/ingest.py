@@ -17,8 +17,8 @@ SMART_COLUMNS = [f"smart_{n}_raw" for n in SMART_ATTRIBUTES] + [
 ]
 
 
-def load_quarter(glob_path: str) -> pl.DataFrame:
-    """Scan a glob of daily CSVs for one quarter and return only the needed columns.
+def load_quarter(glob_path: str | list[str]) -> pl.DataFrame:
+    """Scan a glob (or list of globs, one per quarter) of daily CSVs and return needed columns.
 
     Logs (rather than silently dropping) any expected SMART columns missing
     from this quarter's schema -- column sets change across Backblaze data years.

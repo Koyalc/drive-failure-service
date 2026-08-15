@@ -10,7 +10,7 @@ dev-model:
 	python -m src.pipeline.dummy_model
 
 train:
-	python -m src.pipeline.train --data "data/2022*/*.csv" --cutoff 2022-05-01
+	python -m src.pipeline.train --data "data/Q1_2022/*.csv" "data/Q2_2022/*.csv" --cutoff 2022-05-01
 
 serve:
 	uvicorn src.api.main:app --reload --port 8000

@@ -35,6 +35,6 @@ def test_onnx_matches_xgboost_within_tolerance():
 
     session = ort.InferenceSession(ONNX_MODEL_PATH, providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
-    (onnx_probs,) = session.run(None, {input_name: X})
+    (onnx_probs,) = session.run(["probabilities"], {input_name: X})
 
-    np.testing.assert_allclose(xgb_probs, onnx_probs.reshape(-1), atol=1e-4)
+    np.testing.assert_allclose(xgb_probs, onnx_probs[:, 1], atol=1e-4)
