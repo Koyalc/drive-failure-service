@@ -4,10 +4,10 @@ Predicts hard-drive failure within a 30-day window from SMART telemetry, trained
 Backblaze's public hard-drive dataset. Served via FastAPI + ONNX Runtime, containerized,
 deployed to Cloud Run.
 
-**Status: Phase 1 complete.** Trained on real 2022 Q1-Q2 Backblaze data (2023 Q1-Q2 held out
-for the Phase 7 drift measurement); the API is serving that model's real ONNX export, not a
-placeholder. Cloud deploy, monitoring, and drift detection are still ahead — see the milestone
-list in the build guide.
+**Status: Phases 1-3 complete.** Trained on real 2022 Q1-Q2 Backblaze data (2023 Q1-Q2 held out
+for the Phase 7 drift measurement), iterated past the leakage baseline with real feature
+engineering, and containerized at 414MB. Cloud deploy, monitoring, and drift detection are
+still ahead — see the milestone list in the build guide.
 
 ## Quick start
 
@@ -108,7 +108,7 @@ capacity increase alone was the problem. Reproduce with:
 
 | | |
 |---|---|
-| Image size | — (Phase 3) |
+| Image size | 414MB |
 | p50 / p95 / p99 latency @ 200 RPS | — (Phase 8) |
 | Drift: 2022→2023 PR-AUC degradation | — (Phase 7) |
 
@@ -122,7 +122,12 @@ capacity increase alone was the problem. Reproduce with:
 - **PR-AUC and precision@k, not accuracy** — failures are well under 1% of rows; a model that
   always predicts "no failure" scores ~99.9% accuracy while being useless operationally.
 - **Grouped temporal split, not random** — a random split lets the model see the future and
-  memorize a specific drive's SMART baseline. See the ablation above once run.
+  memorize a specific drive's SMART baseline. See the ablation above.
+- **`sympy`/`mpmath` stripped from the image** — `onnxruntime` declares them as a hard
+  dependency for optional symbolic shape inference that plain `InferenceSession.run()` never
+  exercises. Removing them (in the Dockerfile's builder stage, *before* the final-stage COPY —
+  deleting after copying only masks the layer, it doesn't shrink the image) cut ~85MB, taking
+  the image from 524MB to 414MB. Verified the container still serves correctly afterward.
 
 ## Reproduce
 

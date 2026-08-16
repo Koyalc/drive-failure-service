@@ -2,6 +2,8 @@ data/
 tests/
 docs/
 mlruns/
+artifacts/_cache/
+artifacts/xgb_model.json
 .venv/
 .git/
 .github/
