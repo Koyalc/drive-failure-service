@@ -10,6 +10,27 @@ from datetime import date
 
 import polars as pl
 
+from src.feature_spec import SMART_ATTRIBUTES, delta7d_column
+
+
+def add_delta_features(df: pl.DataFrame) -> pl.DataFrame:
+    """Trailing 7-day change in each raw SMART counter, per drive.
+
+    A single day's snapshot can't distinguish a reading that's been flat for
+    months from one climbing fast -- most SMART-based failure models treat
+    the growth rate of reallocated/pending-sector counts as more informative
+    than their absolute value. Requires the frame to already contain a full,
+    date-contiguous history per serial_number (not a single day).
+    """
+    df = df.sort(["serial_number", "date"])
+    exprs = [
+        (pl.col(f"smart_{n}_raw") - pl.col(f"smart_{n}_raw").shift(7).over("serial_number"))
+        .fill_null(0.0)
+        .alias(delta7d_column(n))
+        for n in SMART_ATTRIBUTES
+    ]
+    return df.with_columns(exprs)
+
 
 def add_labels(df: pl.DataFrame, horizon_days: int = 30) -> pl.DataFrame:
     failures = df.filter(pl.col("failure") == 1).select(

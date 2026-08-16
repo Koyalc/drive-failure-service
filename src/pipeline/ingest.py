@@ -8,13 +8,9 @@ temperature, LBA written/read).
 """
 import polars as pl
 
-SMART_ATTRIBUTES = [5, 9, 187, 188, 194, 197, 198, 241, 242]
+from src.feature_spec import BASE_COLUMNS, SMART_ATTRIBUTES, SMART_COLUMNS
 
-BASE_COLUMNS = ["date", "serial_number", "model", "capacity_bytes", "failure"]
-
-SMART_COLUMNS = [f"smart_{n}_raw" for n in SMART_ATTRIBUTES] + [
-    f"smart_{n}_normalized" for n in SMART_ATTRIBUTES
-]
+__all__ = ["SMART_ATTRIBUTES", "BASE_COLUMNS", "SMART_COLUMNS", "load_quarter"]
 
 
 def load_quarter(glob_path: str | list[str]) -> pl.DataFrame:

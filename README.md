@@ -19,18 +19,20 @@ make test
 ```
 
 ```bash
+# smart_N_raw_7d_ago is that attribute's raw reading from ~7 days earlier -- the
+# caller supplies it so the server can derive the same trend features training used.
 curl -X POST localhost:8000/predict -H 'content-type: application/json' -d '{
   "records": [{
     "serial_number": "Z1TEST0001", "capacity_bytes": 4000787030016,
-    "smart_5_raw": 0, "smart_5_normalized": 100,
-    "smart_9_raw": 12000, "smart_9_normalized": 90,
-    "smart_187_raw": 0, "smart_187_normalized": 100,
-    "smart_188_raw": 0, "smart_188_normalized": 100,
-    "smart_194_raw": 30, "smart_194_normalized": 65,
-    "smart_197_raw": 0, "smart_197_normalized": 100,
-    "smart_198_raw": 0, "smart_198_normalized": 100,
-    "smart_241_raw": 500000, "smart_241_normalized": 100,
-    "smart_242_raw": 500000, "smart_242_normalized": 100
+    "smart_5_raw": 0, "smart_5_normalized": 100, "smart_5_raw_7d_ago": 0,
+    "smart_9_raw": 12000, "smart_9_normalized": 90, "smart_9_raw_7d_ago": 11832,
+    "smart_187_raw": 0, "smart_187_normalized": 100, "smart_187_raw_7d_ago": 0,
+    "smart_188_raw": 0, "smart_188_normalized": 100, "smart_188_raw_7d_ago": 0,
+    "smart_194_raw": 30, "smart_194_normalized": 65, "smart_194_raw_7d_ago": 29,
+    "smart_197_raw": 0, "smart_197_normalized": 100, "smart_197_raw_7d_ago": 0,
+    "smart_198_raw": 0, "smart_198_normalized": 100, "smart_198_raw_7d_ago": 0,
+    "smart_241_raw": 500000, "smart_241_normalized": 100, "smart_241_raw_7d_ago": 498000,
+    "smart_242_raw": 500000, "smart_242_normalized": 100, "smart_242_raw_7d_ago": 498000
   }]
 }'
 ```
@@ -55,10 +57,13 @@ See `src/pipeline/ingest.py`.
 
 ```
 src/
-  api/           FastAPI app, Pydantic schemas, ONNX predictor wrapper, Prometheus metrics
-  pipeline/       ingest (Polars), labeling + leakage-safe split, XGBoost training, ONNX export
-tests/            API tests (dummy-model fixture), predictor unit test, XGBoost/ONNX parity check
-artifacts/        model.onnx (gitignored) + feature_config.json (tracked)
+  feature_spec.py  SMART attribute list + feature naming, shared by training and serving
+                    (dependency-free -- keeps polars/xgboost out of the serving image)
+  api/             FastAPI app, Pydantic schemas, ONNX predictor wrapper, Prometheus metrics
+  pipeline/        ingest (Polars), labeling + trend features + leakage-safe split, training
+tests/             API tests (dummy-model fixture), predictor unit test, XGBoost/ONNX parity check
+artifacts/         model.onnx (gitignored) + feature_config.json (tracked; feature list is
+                    written by train.py so serving can never drift out of sync with training)
 ```
 
 ## Results
@@ -66,22 +71,40 @@ artifacts/        model.onnx (gitignored) + feature_config.json (tracked)
 Trained on 2022 Q1-Q2 (38M drive-days, 90 days x2 quarters, ~1,300 failures — a 0.003% positive
 rate). Cutoff for the temporal split: 2022-05-01.
 
+**Why not "accuracy"?** A model predicting "never fails" for every drive scores 99.997%
+accuracy on this data while catching zero real failures — accuracy is meaningless under this
+level of class imbalance. PR-AUC and precision@k are reported instead because they reflect
+what an operator actually cares about: of the drives flagged as high-risk, how many really fail.
+
 | Metric | Naive random split | Grouped temporal split |
 |---|---|---|
-| PR-AUC | 0.222 | **0.027** |
-| ROC-AUC | 0.947 | 0.690 |
-| Precision@100 | 86% | 6% |
+| PR-AUC | 0.279 | **0.101** |
+| ROC-AUC | 0.939 | 0.635 |
+| Precision@100 | 95% | 22% |
 
 The naive split lets the model see the future and memorize per-drive SMART baselines it
 implicitly re-encounters in "test" rows from the same serial number. Once both leaks are
-closed, PR-AUC drops **8x** and precision@100 — "of the 100 drives we'd flag tonight, how many
-actually fail" — drops from 86 to 6. The naive number is not a result anyone should ship;
-it's the control that shows why the split matters. See `src/pipeline/features.py` for both
-split implementations and `src/pipeline/train.py` for the run that produced this table.
+closed, PR-AUC drops to a third of the naive number, and precision@100 — "of the 100 drives
+we'd flag tonight, how many actually fail" — drops from 95 to 22. The naive number is not a
+result anyone should ship; it's the control that shows why the split matters. See
+`src/pipeline/features.py` for both split implementations and `src/pipeline/train.py --help`
+for the run that produced this table.
 
-The 0.027 PR-AUC on the grouped split is a real baseline, not a bug — expect it to improve with
-feature engineering (rolling SMART deltas, drive age) in a later iteration; it is not this
-project's focus and is being reported honestly rather than hidden.
+**Iterating on the grouped-temporal (honest) split, in order:**
+
+| Change | PR-AUC | Precision@100 | Verdict |
+|---|---|---|---|
+| Raw SMART snapshot only, depth 6, 400 trees | 0.027 | 6% | Phase 1 baseline |
+| + 7-day trend features, depth 7, early-stopped on a 14-day tail | 0.010 | 3% | **Worse** — deeper trees (575) overfit a validation window with too few failures in it to be a reliable stopping signal |
+| + 7-day trend features, same depth/trees as baseline (isolates the feature effect) | 0.038 | 6% | Trend features alone help (+40% PR-AUC) |
+| + early-stopped on a 30-day tail (more stable), depth 6 | **0.101** | **22%** | Best — stopped at 130 trees once the larger validation window showed genuine overfitting |
+| + lower learning rate (0.03), more rounds | 0.068 | 26% | Worse PR-AUC despite a marginally better precision@100; not kept |
+
+The failed middle attempt is left in the table on purpose: adding both model capacity and new
+features in the same step made it impossible to tell whether the trend features helped or the
+extra depth was quietly overfitting. Separating them showed the features were good and the
+capacity increase alone was the problem. Reproduce with:
+`python -m src.pipeline.train --data "data/Q1_2022/*.csv" "data/Q2_2022/*.csv" --cutoff 2022-05-01 --max-depth 6 --n-estimators 600 --early-stopping-tail-days 30`
 
 | | |
 |---|---|

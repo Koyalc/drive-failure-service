@@ -2,17 +2,12 @@ import random
 
 from locust import HttpUser, between, task
 
-FEATURE_KEYS = [
-    "capacity_bytes",
-    "smart_5_raw", "smart_5_normalized",
-    "smart_9_raw", "smart_9_normalized",
-    "smart_187_raw", "smart_187_normalized",
-    "smart_188_raw", "smart_188_normalized",
-    "smart_194_raw", "smart_194_normalized",
-    "smart_197_raw", "smart_197_normalized",
-    "smart_198_raw", "smart_198_normalized",
-    "smart_241_raw", "smart_241_normalized",
-    "smart_242_raw", "smart_242_normalized",
+SMART_ATTRIBUTES = [5, 9, 187, 188, 194, 197, 198, 241, 242]
+
+FEATURE_KEYS = ["capacity_bytes"] + [
+    f"smart_{n}_{suffix}"
+    for n in SMART_ATTRIBUTES
+    for suffix in ("raw", "normalized", "raw_7d_ago")
 ]
 
 
