@@ -1,4 +1,4 @@
-.PHONY: install install-train dev-model serve test lint docker-build docker-run
+.PHONY: install install-train dev-model serve test lint docker-build docker-run train drift
 
 install:
 	pip install -r requirements-dev.txt
@@ -11,6 +11,9 @@ dev-model:
 
 train:
 	python -m src.pipeline.train --data "data/Q1_2022/*.csv" "data/Q2_2022/*.csv" --cutoff 2022-05-01
+
+drift:
+	python -m src.pipeline.drift --data "data/Q1_2023/*.csv" "data/Q2_2023/*.csv"
 
 serve:
 	uvicorn src.api.main:app --reload --port 8000

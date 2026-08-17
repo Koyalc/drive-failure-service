@@ -4,10 +4,10 @@ Predicts hard-drive failure within a 30-day window from SMART telemetry, trained
 Backblaze's public hard-drive dataset. Served via FastAPI + ONNX Runtime, containerized,
 deployed to Cloud Run.
 
-**Status: Phases 1-3 complete.** Trained on real 2022 Q1-Q2 Backblaze data (2023 Q1-Q2 held out
-for the Phase 7 drift measurement), iterated past the leakage baseline with real feature
-engineering, and containerized at 414MB. Cloud deploy, monitoring, and drift detection are
-still ahead — see the milestone list in the build guide.
+**Status: Phases 1-7 complete.** Trained on real 2022 Q1-Q2 Backblaze data, iterated past the
+leakage baseline with real feature engineering, containerized at 414MB, and deployed live to
+Cloud Run: https://drive-failure-service-rrc7oxg3tq-uc.a.run.app/docs. Scored against the 2023
+Q1-Q2 holdout to measure drift (see below). Load testing (Phase 8) is what's left.
 
 ## Quick start
 
@@ -60,7 +60,8 @@ src/
   feature_spec.py  SMART attribute list + feature naming, shared by training and serving
                     (dependency-free -- keeps polars/xgboost out of the serving image)
   api/             FastAPI app, Pydantic schemas, ONNX predictor wrapper, Prometheus metrics
-  pipeline/        ingest (Polars), labeling + trend features + leakage-safe split, training
+  pipeline/        ingest (Polars), labeling + trend features + leakage-safe split, training,
+                    drift (score against a later period + Evidently report)
 tests/             API tests (dummy-model fixture), predictor unit test, XGBoost/ONNX parity check
 artifacts/         model.onnx (gitignored) + feature_config.json (tracked; feature list is
                     written by train.py so serving can never drift out of sync with training)
@@ -111,7 +112,32 @@ capacity increase alone was the problem. Reproduce with:
 |---|---|
 | Image size | 414MB |
 | p50 / p95 / p99 latency @ 200 RPS | — (Phase 8) |
-| Drift: 2022→2023 PR-AUC degradation | — (Phase 7) |
+| Drift: 2022→2023 PR-AUC | 0.101 → **0.042** (-59%) |
+
+## Drift: scoring the 2022 model against 2023
+
+The 2022-trained model was scored, unmodified, against the full 2023 Q1-Q2 holdout (43M
+drive-days — the fleet grew ~14% since 2022) with no retraining. Two things moved, and moved in
+different directions:
+
+| | 2022 (honest test) | 2023 (holdout) |
+|---|---|---|
+| PR-AUC | 0.101 | **0.042** (-59%) |
+| ROC-AUC | 0.635 | 0.665 |
+| Precision@100 | 22% | 71% |
+| Failure prevalence | 0.0034% | **0.129%** (37.6x) |
+
+Precision@100 and ROC-AUC both look *better* in 2023 — but that's a base-rate effect, not a
+better model: failures are 37.6x more common in the 2023 fleet, so the top-100-by-score is far
+more likely to contain a real failure almost by construction. PR-AUC corrects for prevalence and
+is the metric that matters here, and it dropped by more than half. Evidently's data drift report
+(`DataDriftPreset`, 200K-row samples from each period — running the KS-test/PSI battery over the
+full 38M/43M-row populations isn't necessary for a stable drift signal and isn't memory-feasible
+on a laptop) flags **10 of 28 features (36%)** as statistically drifted. Together this is real
+concept drift, not just a class-imbalance shift: the 2022 model's learned relationship between
+SMART readings and failure risk doesn't transfer cleanly to the 2023 fleet. Full report:
+[`docs/drift_report.html`](docs/drift_report.html). Reproduce with:
+`python -m src.pipeline.drift --data "data/Q1_2023/*.csv" "data/Q2_2023/*.csv"`
 
 ## Design decisions
 
@@ -129,6 +155,15 @@ capacity increase alone was the problem. Reproduce with:
   exercises. Removing them (in the Dockerfile's builder stage, *before* the final-stage COPY —
   deleting after copying only masks the layer, it doesn't shrink the image) cut ~85MB, taking
   the image from 524MB to 414MB. Verified the container still serves correctly afterward.
+- **2023 data loaded one quarter at a time, not combined like 2022 training was** — Backblaze
+  changed their CSV schema mid-2023 (added `pod_id`/`vault_id` and two SMART attributes between
+  Q1 and Q2), which broke `ingest.py`'s single `scan_csv` call across the full glob list (Polars
+  requires a uniform schema per multi-file scan); fixed by scanning each quarter separately in
+  `load_quarter`. Separately, the *combined* 2023 Q1+Q2 raw CSVs (14.5GB, larger than 2022's
+  12.6GB) OOM-killed the delta-feature sort/window step on a 16GB machine — `drift.py` processes
+  each quarter through the feature pipeline independently and concatenates afterward, trading a
+  second "cold start" 7-day delta reset at the quarter boundary for bounded memory. Neither of
+  these affects the 2022 training path.
 
 ## Reproduce
 
@@ -137,6 +172,7 @@ make install-train                                    # training deps
 python -m src.pipeline.train --data "data/Q1_2022/*.csv" "data/Q2_2022/*.csv" --cutoff 2022-05-01
 make docker-build
 make docker-run
+make drift                                            # score the model against the 2023 holdout
 ```
 
 ## Deploy to Cloud Run
