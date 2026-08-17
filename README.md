@@ -4,10 +4,10 @@ Predicts hard-drive failure within a 30-day window from SMART telemetry, trained
 Backblaze's public hard-drive dataset. Served via FastAPI + ONNX Runtime, containerized,
 deployed to Cloud Run.
 
-**Status: Phases 1-7 complete.** Trained on real 2022 Q1-Q2 Backblaze data, iterated past the
+**Status: all 8 phases complete.** Trained on real 2022 Q1-Q2 Backblaze data, iterated past the
 leakage baseline with real feature engineering, containerized at 414MB, and deployed live to
 Cloud Run: https://drive-failure-service-rrc7oxg3tq-uc.a.run.app/docs. Scored against the 2023
-Q1-Q2 holdout to measure drift (see below). Load testing (Phase 8) is what's left.
+Q1-Q2 holdout to measure drift, and load-tested the live deployment at ~215 req/s (see below).
 
 ## Quick start
 
@@ -111,7 +111,8 @@ capacity increase alone was the problem. Reproduce with:
 | | |
 |---|---|
 | Image size | 414MB |
-| p50 / p95 / p99 latency @ 200 RPS | — (Phase 8) |
+| p50 / p95 / p99 latency @ ~215 RPS | 210ms / 1.2s / 1.6s |
+| Cold start (scaled-to-zero) | ~0.3s |
 | Drift: 2022→2023 PR-AUC | 0.101 → **0.042** (-59%) |
 
 ## Drift: scoring the 2022 model against 2023
@@ -138,6 +139,29 @@ concept drift, not just a class-imbalance shift: the 2022 model's learned relati
 SMART readings and failure risk doesn't transfer cleanly to the 2023 fleet. Full report:
 [`docs/drift_report.html`](docs/drift_report.html). Reproduce with:
 `python -m src.pipeline.drift --data "data/Q1_2023/*.csv" "data/Q2_2023/*.csv"`
+
+## Load test
+
+3-minute run against the live Cloud Run deployment (`min-instances=0`, single revision, no
+manual warm-up beyond the cold-start measurement below), 150 concurrent Locust users ramping at
+15/s, each posting 1-50 record batches to `/predict`:
+
+| | |
+|---|---|
+| Requests | 38,506 |
+| Failures | 0 |
+| Sustained throughput | ~215 req/s |
+| p50 / p95 / p99 | 210ms / 1.2s / 1.6s |
+| Max | 5.7s |
+
+Zero failures at sustained load is the headline result. The p50 (210ms) reflects steady-state
+single-instance inference; the gap out to p95/p99 and the 5.7s max are consistent with Cloud Run
+adding instances mid-run to absorb the ramp — a few requests queue or land on a fresh instance
+while it starts. Separately, a single request against a fully scaled-to-zero revision (no traffic
+for the prior ~20 minutes) came back in ~0.3s, faster than the multi-second cold starts this
+class of service can have; small, ONNX-only image is doing its job here. Full report:
+[`docs/load_test_report.html`](docs/load_test_report.html). Reproduce with:
+`locust -f locustfile.py --headless -u 150 -r 15 --run-time 3m --host <your-cloud-run-url>`
 
 ## Design decisions
 
