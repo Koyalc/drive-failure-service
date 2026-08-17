@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Drive Failure Model — Leakage Ablation &amp; Iteration</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page:           #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --series-1:       #2a78d6; /* blue: naive random / primary series */
+    --series-2:       #eb6834; /* orange: grouped temporal */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --series-1:       #3987e5;
+      --series-2:       #d95926;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page:           #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --series-1:       #3987e5;
+    --series-2:       #d95926;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  .viz-root {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page);
+    color: var(--text-primary);
+    padding: 32px 24px 48px;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 14px; margin: 0 0 28px; }
+  .card {
+    background: var(--surface-1);
+    border-radius: 12px;
+    padding: 24px 24px 16px;
+    margin-bottom: 24px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 2px; }
+  .card .desc { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; max-width: 640px; }
+  .legend { display: flex; gap: 18px; margin-bottom: 16px; font-size: 12px; color: var(--text-secondary); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  svg { display: block; overflow: visible; }
+  .axis-label { fill: var(--text-muted); font-size: 11px; }
+  .bar-label { fill: var(--text-primary); font-size: 12px; font-weight: 600; }
+  .group-label { fill: var(--text-secondary); font-size: 12px; }
+  .step-label { fill: var(--text-secondary); font-size: 11px; }
+  .annot { fill: var(--text-muted); font-size: 10.5px; }
+  .baseline-line { stroke: var(--baseline); stroke-width: 1; }
+  .grid-line { stroke: var(--gridline); stroke-width: 1; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <div class="wrap">
+    <h1>Drive failure model: leakage ablation and honest-split iteration</h1>
+    <p class="subtitle">2022 Q1&ndash;Q2 Backblaze data, 38M drive-days. Generated from the MLflow run history in the <code>drive-failure</code> experiment.</p>
+
+    <div class="card">
+      <h2>The leakage ablation</h2>
+      <p class="desc">Same features, same hyperparameters &mdash; only the train/test split changes. The naive random split lets the model see the future and memorize per-drive baselines; the grouped temporal split removes both leaks.</p>
+      <div class="legend">
+        <span><i class="swatch" style="background:var(--series-1)"></i>Naive random split</span>
+        <span><i class="swatch" style="background:var(--series-2)"></i>Grouped temporal split (honest)</span>
+      </div>
+      <svg id="chart1" width="872" height="220" viewBox="0 0 872 220"></svg>
+    </div>
+
+    <div class="card">
+      <h2>Iterating on the honest split</h2>
+      <p class="desc">PR-AUC on the grouped-temporal split only, across five training runs in order. The regression at step 2 is left in on purpose &mdash; see annotation.</p>
+      <svg id="chart2" width="872" height="260" viewBox="0 0 872 260"></svg>
+    </div>
+  </div>
+</div>
+
+<script>
+function css(name) {
+  return getComputedStyle(document.querySelector('.viz-root')).getPropertyValue(name).trim();
+}
+
+// ---- Chart 1: grouped bar, two metrics x two splits ----
+(function () {
+  const svg = document.getElementById('chart1');
+  const data = [
+    { metric: 'PR-AUC',        naive: 0.279, grouped: 0.101, naiveLabel: '0.279', groupedLabel: '0.101' },
+    { metric: 'Precision@100', naive: 0.95,  grouped: 0.22,  naiveLabel: '95%',   groupedLabel: '22%' },
+  ];
+  const plotW = 760, plotH = 150, left = 60, top = 20;
+  const groupW = plotW / data.length;
+  const barW = 42, gap = 4;
+  const maxVal = 1.0;
+
+  const s1 = css('--series-1'), s2 = css('--series-2');
+  const grid = css('--gridline'), baseline = css('--baseline'), muted = css('--text-muted');
+
+  let html = '';
+  // gridlines at 0, 0.25, 0.5, 0.75, 1.0
+  [0, 0.25, 0.5, 0.75, 1.0].forEach(v => {
+    const y = top + plotH - v * plotH;
+    html += `<line x1="${left}" y1="${y}" x2="${left + plotW}" y2="${y}" class="grid-line" />`;
+    html += `<text x="${left - 10}" y="${y + 4}" text-anchor="end" class="axis-label">${v}</text>`;
+  });
+
+  data.forEach((d, i) => {
+    const cx = left + groupW * i + groupW / 2;
+    const naiveH = d.naive * plotH, groupedH = d.grouped * plotH;
+    const x1 = cx - barW - gap / 2, x2 = cx + gap / 2;
+    html += `<rect x="${x1}" y="${top + plotH - naiveH}" width="${barW}" height="${naiveH}" rx="4" fill="${s1}"><title>Naive random ${d.metric}: ${d.naiveLabel}</title></rect>`;
+    html += `<rect x="${x2}" y="${top + plotH - groupedH}" width="${barW}" height="${groupedH}" rx="4" fill="${s2}"><title>Grouped temporal ${d.metric}: ${d.groupedLabel}</title></rect>`;
+    html += `<text x="${x1 + barW/2}" y="${top + plotH - naiveH - 8}" text-anchor="middle" class="bar-label">${d.naiveLabel}</text>`;
+    html += `<text x="${x2 + barW/2}" y="${top + plotH - groupedH - 8}" text-anchor="middle" class="bar-label">${d.groupedLabel}</text>`;
+    html += `<text x="${cx}" y="${top + plotH + 24}" text-anchor="middle" class="group-label">${d.metric}</text>`;
+  });
+  html += `<line x1="${left}" y1="${top + plotH}" x2="${left + plotW}" y2="${top + plotH}" class="baseline-line" />`;
+  svg.innerHTML = html;
+})();
+
+// ---- Chart 2: ordered single-series bars, grouped_temporal PR-AUC over iteration ----
+(function () {
+  const svg = document.getElementById('chart2');
+  const steps = [
+    { label: 'Phase 1 baseline', sub: 'depth 6, 400 trees', v: 0.027 },
+    { label: '+ trend feat.', sub: 'depth 7, 14d val. tail', v: 0.010, note: 'overfit — 575 trees, val. window too small' },
+    { label: '+ trend feat.', sub: 'depth 6, 400 trees', v: 0.038, note: 'features isolated from capacity' },
+    { label: '+ 30d val. tail', sub: 'depth 6, early-stopped', v: 0.101, note: 'best — stopped at 130 trees' },
+    { label: '+ lower lr', sub: '0.03, more rounds', v: 0.068, note: 'worse; not kept' },
+  ];
+  const plotW = 800, plotH = 160, left = 40, top = 20;
+  const n = steps.length, slot = plotW / n, barW = 40;
+  const maxVal = 0.12;
+  const s1 = css('--series-1');
+
+  let html = '';
+  [0, 0.03, 0.06, 0.09, 0.12].forEach(v => {
+    const y = top + plotH - (v / maxVal) * plotH;
+    html += `<line x1="${left}" y1="${y}" x2="${left + plotW}" y2="${y}" class="grid-line" />`;
+    html += `<text x="${left - 10}" y="${y + 4}" text-anchor="end" class="axis-label">${v.toFixed(2)}</text>`;
+  });
+
+  steps.forEach((d, i) => {
+    const cx = left + slot * i + slot / 2;
+    const h = (d.v / maxVal) * plotH;
+    const x = cx - barW / 2;
+    html += `<rect x="${x}" y="${top + plotH - h}" width="${barW}" height="${h}" rx="4" fill="${s1}"><title>${d.label} (${d.sub}): PR-AUC ${d.v}${d.note ? ' — ' + d.note : ''}</title></rect>`;
+    html += `<text x="${cx}" y="${top + plotH - h - 8}" text-anchor="middle" class="bar-label">${d.v}</text>`;
+    html += `<text x="${cx}" y="${top + plotH + 20}" text-anchor="middle" class="step-label">${d.label}</text>`;
+    html += `<text x="${cx}" y="${top + plotH + 34}" text-anchor="middle" class="step-label" fill="var(--text-muted)">${d.sub}</text>`;
+    if (d.note) {
+      const noteLines = d.note.length > 28 ? [d.note.slice(0, d.note.lastIndexOf(' ', 28)), d.note.slice(d.note.lastIndexOf(' ', 28) + 1)] : [d.note];
+      noteLines.forEach((line, li) => {
+        html += `<text x="${cx}" y="${top + plotH + 52 + li * 12}" text-anchor="middle" class="annot">${line}</text>`;
+      });
+    }
+  });
+  html += `<line x1="${left}" y1="${top + plotH}" x2="${left + plotW}" y2="${top + plotH}" class="baseline-line" />`;
+  svg.innerHTML = html;
+})();
+</script>
+</body>
+</html>

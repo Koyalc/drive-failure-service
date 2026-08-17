@@ -88,7 +88,8 @@ closed, PR-AUC drops to a third of the naive number, and precision@100 — "of t
 we'd flag tonight, how many actually fail" — drops from 95 to 22. The naive number is not a
 result anyone should ship; it's the control that shows why the split matters. See
 `src/pipeline/features.py` for both split implementations and `src/pipeline/train.py --help`
-for the run that produced this table.
+for the run that produced this table. A visual version of this ablation and the iteration
+table below is in [`docs/ablation_comparison.html`](docs/ablation_comparison.html).
 
 **Iterating on the grouped-temporal (honest) split, in order:**
 
@@ -137,3 +138,32 @@ python -m src.pipeline.train --data "data/Q1_2022/*.csv" "data/Q2_2022/*.csv" --
 make docker-build
 make docker-run
 ```
+
+## Deploy to Cloud Run
+
+CI builds and pushes the image to GHCR on every push to `master`; the `deploy` job then ships
+that same image straight to Cloud Run (no separate Artifact Registry push — GHCR is free for
+public images and Cloud Run can pull from any registry the image is publicly readable from).
+`--min-instances=0 --allow-unauthenticated` keeps it inside the Cloud Run Always Free tier and
+reachable for a demo curl; cold starts are the accepted tradeoff (see Design decisions).
+
+One-time setup (outside this repo, in your GCP project):
+
+```bash
+gcloud services enable run.googleapis.com
+gcloud iam service-accounts create drive-failure-deployer
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:drive-failure-deployer@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/run.admin"
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:drive-failure-deployer@$PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser"
+gcloud iam service-accounts keys create key.json \
+  --iam-account=drive-failure-deployer@$PROJECT_ID.iam.gserviceaccount.com
+```
+
+Then, in the GitHub repo: Settings → Secrets and variables → Actions, add `GCP_PROJECT_ID`,
+`GCP_REGION` (e.g. `us-central1`), and `GCP_SA_KEY` (the contents of `key.json` — delete the
+local copy after). Also flip the GHCR package's visibility to public once
+(Package settings on GitHub — Cloud Run needs to pull it anonymously). Delete `key.json` locally
+after pasting it into the secret; it's a long-lived credential and shouldn't sit on disk.

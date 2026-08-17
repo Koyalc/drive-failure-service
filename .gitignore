@@ -10,7 +10,6 @@ __pycache__/
 htmlcov/
 *.egg-info/
 .DS_Store
-docs/*.html
 results_*.csv
 results_*.html
 artifacts/xgb_model.json

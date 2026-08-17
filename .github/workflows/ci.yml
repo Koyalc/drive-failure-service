@@ -16,6 +16,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     permissions: { contents: read, packages: write }
+    outputs:
+      image: ${{ steps.image.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
@@ -24,8 +26,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Lowercase image name
-        run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+        id: image
+        run: |
+          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "tag=$IMAGE:${{ github.sha }}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v5
         with:
           push: true
           tags: ${{ env.IMAGE }}:${{ github.sha }}
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: drive-failure-service
+          region: ${{ secrets.GCP_REGION }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          image: ${{ needs.build.outputs.image }}
+          flags: --min-instances=0 --allow-unauthenticated
